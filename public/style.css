@@ -476,6 +476,46 @@ html, body {
   color: var(--sage-900);
 }
 
+.btn-outline-sage {
+  background-color: var(--overlay-camera);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(183, 201, 174, 0.35);
+  color: var(--sage-50);
+}
+
+.btn-outline-sage:hover {
+  background-color: rgba(79, 111, 90, 0.4);
+}
+
+.frozen-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.crop-info-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--overlay-camera);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(183, 201, 174, 0.4);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sage-100);
+  box-shadow: var(--shadow-soft);
+}
+
+.crop-divider {
+  color: var(--sage-500);
+}
+
 .btn-block {
   width: 100%;
 }
