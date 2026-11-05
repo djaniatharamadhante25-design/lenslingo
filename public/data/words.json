@@ -1,0 +1,22 @@
+[
+  { "english": "laptop", "indonesian": "laptop", "asl_image": "" },
+  { "english": "mouse", "indonesian": "tetikus", "asl_image": "" },
+  { "english": "keyboard", "indonesian": "papan ketik", "asl_image": "" },
+  { "english": "cell phone", "indonesian": "ponsel", "asl_image": "" },
+  { "english": "book", "indonesian": "buku", "asl_image": "" },
+  { "english": "bottle", "indonesian": "botol", "asl_image": "" },
+  { "english": "cup", "indonesian": "cangkir", "asl_image": "" },
+  { "english": "chair", "indonesian": "kursi", "asl_image": "" },
+  { "english": "backpack", "indonesian": "tas ransel", "asl_image": "" },
+  { "english": "clock", "indonesian": "jam dinding", "asl_image": "" },
+  { "english": "tumbler", "indonesian": "botol minum", "asl_image": "" },
+  { "english": "glasses", "indonesian": "kacamata", "asl_image": "" },
+  { "english": "shirt", "indonesian": "kemeja", "asl_image": "" },
+  { "english": "lunch box", "indonesian": "kotak bekal", "asl_image": "" },
+  { "english": "pen", "indonesian": "pulpen", "asl_image": "" },
+  { "english": "whiteboard", "indonesian": "papan tulis", "asl_image": "" },
+  { "english": "table", "indonesian": "meja", "asl_image": "" },
+  { "english": "door", "indonesian": "pintu", "asl_image": "" },
+  { "english": "window", "indonesian": "jendela", "asl_image": "" },
+  { "english": "bag", "indonesian": "tas", "asl_image": "" }
+]

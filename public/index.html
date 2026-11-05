@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>LensLingo - Belajar Bahasa Inggris Lewat Kamera</title>
+  <meta name="description" content="Aplikasi mobile-first bergaya Google Lens untuk belajar kosakata bahasa Inggris langsung dari kamera dengan palet warna Sage.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- TAMPILAN UTAMA: KAMERA PENUH (CAMERA-FIRST FULL-SCREEN) -->
+  <div id="cameraViewport" class="camera-viewport">
+    <!-- Stream Video Kamera Langsung -->
+    <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+
+    <!-- Canvas Frame Beku (Digunakan setelah Shutter ditekan) -->
+    <canvas id="freezeCanvas" class="freeze-canvas" hidden></canvas>
+
+    <!-- Overlay Viewfinder & Bounding Box -->
+    <div id="viewfinderOverlay" class="viewfinder-overlay">
+      <!-- 4 Panel Gelap di Luar Bounding Box (Scrim) -->
+      <div id="scrimTop" class="scrim scrim-top"></div>
+      <div id="scrimBottom" class="scrim scrim-bottom"></div>
+      <div id="scrimLeft" class="scrim scrim-left"></div>
+      <div id="scrimRight" class="scrim scrim-right"></div>
+
+      <!-- Kotak Seleksi (Bounding Box) yang Dapat Digeser & Diubah Ukuran -->
+      <div id="boundingBox" class="bounding-box" role="region" aria-label="Area fokus objek foto">
+        <!-- 4 Pegangan Sudut (Corner Handles) -->
+        <div class="corner-handle corner-tl" data-handle="tl" aria-label="Ubah ukuran sudut kiri atas"></div>
+        <div class="corner-handle corner-tr" data-handle="tr" aria-label="Ubah ukuran sudut kanan atas"></div>
+        <div class="corner-handle corner-bl" data-handle="bl" aria-label="Ubah ukuran sudut kiri bawah"></div>
+        <div class="corner-handle corner-br" data-handle="br" aria-label="Ubah ukuran sudut kanan bawah"></div>
+        
+        <!-- Indikator Pusat Reticle Bounding Box -->
+        <div class="bounding-reticle" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <!-- Top Bar Mengambang: Brand & Tombol Menu -->
+    <header class="top-bar">
+      <div class="brand-pill">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span class="brand-name">LensLingo</span>
+      </div>
+      <button type="button" id="btnOpenMenu" class="btn-top-icon" title="Buka Menu" aria-label="Buka Menu">
+        <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Pemberitahuan Status Kamera (Izin Ditolak / Non-HTTPS / Tanpa Kamera) -->
+    <div id="cameraNotice" class="camera-notice-card" hidden role="alert">
+      <div class="notice-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="svg-icon-large">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" fill="none"/>
+          <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2"/>
+        </svg>
+      </div>
+      <h2 id="cameraNoticeTitle" class="notice-title">Kamera Tidak Tersedia</h2>
+      <p id="cameraNoticeMessage" class="notice-desc">
+        Akses kamera memerlukan izin atau sambungan HTTPS. Anda tetap dapat belajar dengan memilih foto dari galeri.
+      </p>
+      <button type="button" id="btnNoticeGallery" class="btn btn-sage-accent">
+        <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2" fill="none"/>
+          <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+          <polyline points="21 15 16 10 5 21" stroke="currentColor" stroke-width="2" fill="none"/>
+        </svg>
+        <span>Pilih dari Galeri</span>
+      </button>
+    </div>
+
+    <!-- Kontrol Mengambang Bawah: Galeri, Shutter, Flip Kamera, & Mode Switcher -->
+    <div class="bottom-controls-dock">
+      <!-- Baris Tombol Aksi Kamera -->
+      <div class="action-buttons-row">
+        <!-- Tombol Galeri (Kiri) -->
+        <button type="button" id="btnGallery" class="btn-dock-icon" title="Pilih foto dari galeri" aria-label="Pilih foto dari galeri">
+          <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2" fill="none"/>
+            <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+            <polyline points="21 15 16 10 5 21" stroke="currentColor" stroke-width="2" fill="none"/>
+          </svg>
+        </button>
+
+        <!-- Floating Shutter Button Besar (Tengah) -->
+        <button type="button" id="btnShutter" class="btn-shutter" title="Ambil foto untuk kenali objek" aria-label="Ambil foto untuk kenali objek">
+          <span class="shutter-inner-ring"></span>
+          <span class="shutter-inner-circle"></span>
+        </button>
+
+        <!-- Tombol Flip Kamera Depan/Belakang (Kanan) -->
+        <button type="button" id="btnFlipCamera" class="btn-dock-icon" title="Ganti kamera depan atau belakang" aria-label="Ganti kamera depan atau belakang">
+          <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+            <path d="M20 7h-3a2 2 0 0 0-2-2h-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <polyline points="18 4 21 7 18 10" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <path d="M4 17h3a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <polyline points="6 20 3 17 6 14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Mode Switcher: Horizontal Scrollable Chip Group -->
+      <nav id="modeSwitcher" class="mode-switcher" aria-label="Pilihan mode belajar">
+        <button type="button" class="mode-chip active" data-mode="translation" aria-pressed="true">
+          Terjemahan
+        </button>
+        <button type="button" class="mode-chip disabled" data-mode="asl" aria-disabled="true" disabled>
+          ASL <span class="chip-badge">Segera</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Input File Tersembunyi untuk Galeri -->
+    <input type="file" id="galleryFileInput" accept="image/jpeg,image/png" class="visually-hidden" aria-label="Unggah file foto">
+  </div>
+
+  <!-- OVERLAY MENU LAYAR PENUH (DAFTAR BELAJAR, KUIS, TENTANG) -->
+  <aside id="menuOverlay" class="menu-overlay" hidden aria-modal="true" role="dialog">
+    <div class="menu-header">
+      <button type="button" id="btnCloseMenu" class="btn-top-icon" title="Tutup Menu" aria-label="Tutup Menu">
+        <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+          <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <h2 class="menu-title">Menu LensLingo</h2>
+      <div class="spacer-top-icon" aria-hidden="true"></div>
+    </div>
+
+    <div class="menu-content">
+      <!-- Navigasi Tab Menu -->
+      <div class="menu-nav-tabs">
+        <button type="button" class="menu-tab-btn active" data-menu-view="saved">Daftar Belajarku</button>
+        <button type="button" class="menu-tab-btn" data-menu-view="quiz">Kuis</button>
+        <button type="button" class="menu-tab-btn" data-menu-view="about">Tentang</button>
+      </div>
+
+      <!-- Subview: Daftar Belajarku -->
+      <section id="menuViewSaved" class="menu-subview">
+        <div class="subview-header">
+          <h3>Kata Tersimpan</h3>
+          <span id="savedWordCount" class="badge-pill">0 kata</span>
+        </div>
+        <div id="savedEmptyPrompt" class="empty-prompt">
+          <p>Belum ada kata yang disimpan.</p>
+          <p class="empty-subtext">Arahkan kamera ke benda lalu simpan kata untuk dipelajari nanti.</p>
+        </div>
+        <ul id="savedWordsList" class="saved-list"></ul>
+      </section>
+
+      <!-- Subview: Kuis -->
+      <section id="menuViewQuiz" class="menu-subview" hidden>
+        <div class="subview-header">
+          <h3>Mini Kuis Kosakata</h3>
+        </div>
+        <div class="quiz-placeholder-card">
+          <p>Tebak arti kata bahasa Inggris dari benda-benda yang telah kamu simpan!</p>
+          <button type="button" id="btnStartQuiz" class="btn btn-sage-accent btn-block" disabled>
+            Mulai Kuis (Segera di Langkah 5)
+          </button>
+        </div>
+      </section>
+
+      <!-- Subview: Tentang LensLingo -->
+      <section id="menuViewAbout" class="menu-subview" hidden>
+        <div class="about-card">
+          <h3>Tentang LensLingo</h3>
+          <p>
+            <strong>LensLingo</strong> adalah aplikasi pembelajaran bahasa Inggris berbasis visual <em>(Project Based Learning)</em> yang mengidentifikasi benda di sekitar Anda menggunakan kecerdasan buatan Google Gemini.
+          </p>
+          <h4>Privasi & Keamanan</h4>
+          <p>
+            Foto yang diambil dianalisis secara sementara menggunakan Gemini API Free Tier. Server LensLingo tidak menyimpan foto dan tidak mencatat data foto ke log.
+          </p>
+          <h4>Desain & Teknologi</h4>
+          <p>
+            Dibuat menggunakan HTML5, CSS3 murni (Palet Sage), dan JavaScript modern tanpa framework.
+          </p>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

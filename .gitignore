@@ -1,0 +1,17 @@
+# File rahasia dan konfigurasi lokal
+.env
+.env.local
+.env.*.local
+
+# Folder internal Vercel & Scratch
+.vercel
+scratch/
+
+# Ketergantungan node
+node_modules/
+
+# File sistem & editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
