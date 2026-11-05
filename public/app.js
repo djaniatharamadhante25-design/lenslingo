@@ -1,6 +1,6 @@
 /**
  * LensLingo - Script Utama (Camera-First Mobile-First)
- * Langkah 2: Bounding Box (Drag & Resize), Shutter, Frame Freezing, Crop & Resize, Galeri.
+ * Langkah 4: Bottom Sheet, API Identify, Cache, Suara, Simpan Kata.
  */
 
 // 1. Registrasi Konfigurasi Mode (Extensible Mode Registry)
@@ -11,7 +11,8 @@ const APP_MODES = {
 
 const STORAGE_KEYS = {
   ACTIVE_MODE: 'lenslingo_active_mode',
-  SAVED_WORDS: 'lenslingo_saved_words'
+  SAVED_WORDS: 'lenslingo_saved_words',
+  IDENTIFY_CACHE: 'lenslingo_cache'
 };
 
 const CROP_CONFIG = {
@@ -20,12 +21,41 @@ const CROP_CONFIG = {
   MIN_BOX_SIZE: 64
 };
 
+// Konfigurasi API & Sheet
+const API_CONFIG = {
+  ENDPOINT: '/api/identify',
+  TIMEOUT_MS: 25000,
+  COOLDOWN_MS: 3000,
+  CACHE_MAX_ENTRIES: 20
+};
+
+// Snap positions sheet (dalam persen dari bawah layar)
+const SHEET_SNAPS = { SMALL: 20, MID: 50, FULL: 90 };
+
 // 2. State Aplikasi
 let currentStream = null;
 let currentFacingMode = 'environment';
 let activeModeId = 'translation';
 let isFrameFrozen = false;
 let currentCroppedData = null;
+
+// State Bottom Sheet
+let sheetCurrentSnap = SHEET_SNAPS.SMALL;
+let sheetIsDragging = false;
+let sheetDragStartY = 0;
+let sheetDragStartTranslate = 0;
+let sheetCurrentTranslate = 100; // 100 = tersembunyi di bawah
+
+// State API
+let lastRequestTime = 0;
+let isApiRequestRunning = false;
+let currentSheetData = null; // Data yang sedang ditampilkan di sheet
+
+// Cache Hasil Identify (key: hash base64, value: { result, ts })
+let identifyCache = {};
+
+// Data words.json yang dimuat di awal
+let wordsData = [];
 
 // State Interaksi Pointer Bounding Box
 let isInteracting = false;
@@ -73,6 +103,32 @@ const btnCloseMenu = document.getElementById('btnCloseMenu');
 const menuOverlay = document.getElementById('menuOverlay');
 const menuTabButtons = document.querySelectorAll('.menu-tab-btn');
 const menuSubviews = document.querySelectorAll('.menu-subview');
+
+// Elemen Bottom Sheet & Status
+const statusOverlay = document.getElementById('statusOverlay');
+const statusMessage = document.getElementById('statusMessage');
+const bottomSheet = document.getElementById('bottomSheet');
+const sheetHandle = document.getElementById('sheetHandle');
+const sheetScrollArea = document.getElementById('sheetScrollArea');
+const wordEn = document.getElementById('wordEn');
+const wordId = document.getElementById('wordId');
+const wordSourceBadge = document.getElementById('wordSourceBadge');
+const btnSpeakNormal = document.getElementById('btnSpeakNormal');
+const btnSpeakSlow = document.getElementById('btnSpeakSlow');
+const altChips = document.querySelectorAll('.alt-chip');
+const exampleEn = document.getElementById('exampleEn');
+const exampleId = document.getElementById('exampleId');
+const manualWordInput = document.getElementById('manualWordInput');
+const btnManualSubmit = document.getElementById('btnManualSubmit');
+const btnSaveWord = document.getElementById('btnSaveWord');
+const btnReanalyze = document.getElementById('btnReanalyze');
+const btnRetakeFromSheet = document.getElementById('btnRetakeFromSheet');
+const sheetError = document.getElementById('sheetError');
+const sheetErrorText = document.getElementById('sheetErrorText');
+const btnDismissSheetError = document.getElementById('btnDismissSheetError');
+const savedWordCount = document.getElementById('savedWordCount');
+const savedEmptyPrompt = document.getElementById('savedEmptyPrompt');
+const savedWordsList = document.getElementById('savedWordsList');
 
 /**
  * 4. Penyesuaian Panel Gelap (Scrim) Mengelilingi Bounding Box
@@ -565,6 +621,620 @@ function switchMenuView(targetViewName) {
 }
 
 /**
+ * 21. Memperbarui tombol Kenali Objek dan menyambungkannya ke API
+ */
+function setupCameraControlEvents() {
+  btnShutter.addEventListener('click', captureCameraFrame);
+  btnRetake.addEventListener('click', retakeCamera);
+
+  btnAnalyzeCrop.addEventListener('click', async () => {
+    const cropData = await cropBoundingBoxImage();
+    if (cropData) {
+      currentCroppedData = cropData;
+      cropDimensionsText.textContent = `${cropData.width} × ${cropData.height} px`;
+      cropSizeText.textContent = `${cropData.sizeKb} KB`;
+      cropInfoBadge.hidden = false;
+      await runIdentifyRequest(cropData);
+    }
+  });
+
+  btnGallery.addEventListener('click', () => galleryFileInput.click());
+  btnNoticeGallery.addEventListener('click', () => galleryFileInput.click());
+
+  galleryFileInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) handleGalleryFile(file);
+    galleryFileInput.value = '';
+  });
+
+  btnFlipCamera.addEventListener('click', toggleCameraFacing);
+}
+
+/* =====================================================================
+   BOTTOM SHEET — Snap, Drag, Tampilkan Hasil
+   ===================================================================== */
+
+/**
+ * 22. Menghitung tinggi sheet yang sudah terlihat (px) dari snap persen
+ */
+function snapToTranslateY(snapPercent) {
+  const sheetHeight = bottomSheet.offsetHeight || window.innerHeight * 0.9;
+  const visiblePx = (snapPercent / 100) * window.innerHeight;
+  // translateY = tinggi sheet dikurangi bagian yang terlihat
+  return Math.max(0, sheetHeight - visiblePx);
+}
+
+/**
+ * 23. Pindahkan sheet ke snap position tertentu
+ * @param {number} snapPercent - 20, 50, atau 90
+ * @param {boolean} animate - gunakan transisi CSS
+ */
+function moveSheetToSnap(snapPercent, animate = true) {
+  sheetCurrentSnap = snapPercent;
+  const ty = snapToTranslateY(snapPercent);
+  sheetCurrentTranslate = ty;
+
+  if (!animate) {
+    bottomSheet.style.transition = 'none';
+  } else {
+    bottomSheet.style.transition = '';
+  }
+  bottomSheet.style.transform = `translateY(${ty}px)`;
+
+  // Aktifkan scroll di area konten hanya saat sheet penuh
+  sheetScrollArea.style.overflow = snapPercent >= SHEET_SNAPS.FULL ? 'auto' : 'hidden';
+}
+
+/**
+ * 24. Tampilkan Bottom Sheet
+ */
+function showBottomSheet(snapPercent = SHEET_SNAPS.SMALL) {
+  bottomSheet.hidden = false;
+  // Mulai dari bawah lalu animasikan ke snap
+  bottomSheet.style.transition = 'none';
+  bottomSheet.style.transform = 'translateY(100%)';
+  // Paksa reflow agar transisi berjalan
+  void bottomSheet.offsetHeight;
+  moveSheetToSnap(snapPercent, true);
+}
+
+/**
+ * 25. Sembunyikan Bottom Sheet
+ */
+function hideBottomSheet() {
+  bottomSheet.style.transition = '';
+  bottomSheet.style.transform = 'translateY(100%)';
+  setTimeout(() => {
+    bottomSheet.hidden = true;
+  }, 350);
+  sheetCurrentSnap = 0;
+}
+
+/**
+ * 26. Drag sheet dengan Pointer Events
+ */
+function setupSheetDragEvents() {
+  sheetHandle.addEventListener('pointerdown', (e) => {
+    sheetIsDragging = true;
+    sheetDragStartY = e.clientY;
+    sheetDragStartTranslate = sheetCurrentTranslate;
+    sheetHandle.setPointerCapture(e.pointerId);
+    // Nonaktifkan transisi saat drag
+    bottomSheet.style.transition = 'none';
+  });
+
+  sheetHandle.addEventListener('pointermove', (e) => {
+    if (!sheetIsDragging) return;
+    const delta = e.clientY - sheetDragStartY;
+    const newTY = Math.max(0, sheetDragStartTranslate + delta);
+    sheetCurrentTranslate = newTY;
+    bottomSheet.style.transform = `translateY(${newTY}px)`;
+  });
+
+  sheetHandle.addEventListener('pointerup', () => {
+    if (!sheetIsDragging) return;
+    sheetIsDragging = false;
+    snapSheetAfterDrag();
+  });
+
+  sheetHandle.addEventListener('pointercancel', () => {
+    sheetIsDragging = false;
+    snapSheetAfterDrag();
+  });
+}
+
+/**
+ * 27. Setelah drag selesai, snap ke posisi terdekat
+ */
+function snapSheetAfterDrag() {
+  const sheetHeight = bottomSheet.offsetHeight || window.innerHeight * 0.9;
+  // Hitung berapa persen layar yang terlihat sekarang
+  const visiblePx = sheetHeight - sheetCurrentTranslate;
+  const visiblePct = (visiblePx / window.innerHeight) * 100;
+
+  // Tentukan snap terdekat
+  const snaps = [SHEET_SNAPS.SMALL, SHEET_SNAPS.MID, SHEET_SNAPS.FULL];
+  let closest = snaps[0];
+  let minDiff = Math.abs(visiblePct - snaps[0]);
+
+  for (const snap of snaps) {
+    const diff = Math.abs(visiblePct - snap);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = snap;
+    }
+  }
+
+  // Kalau ditarik jauh ke bawah (< 10% terlihat), sembunyikan sheet
+  if (visiblePct < 10) {
+    hideBottomSheet();
+    return;
+  }
+
+  moveSheetToSnap(closest, true);
+}
+
+/* =====================================================================
+   CACHE localStorage — Hindari request ulang untuk gambar yang sama
+   ===================================================================== */
+
+/**
+ * 28. Muat cache dari localStorage
+ */
+function loadIdentifyCache() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.IDENTIFY_CACHE);
+    identifyCache = raw ? JSON.parse(raw) : {};
+  } catch {
+    identifyCache = {};
+  }
+}
+
+/**
+ * 29. Buat kunci hash sederhana dari data base64
+ * (panjang + 8 karakter pertama + 8 terakhir)
+ */
+function makeBase64Hash(base64Str) {
+  const len = base64Str.length;
+  return `${len}_${base64Str.slice(0, 8)}_${base64Str.slice(-8)}`;
+}
+
+/**
+ * 30. Ambil dari cache (null kalau tidak ada)
+ */
+function getCachedResult(base64Str) {
+  const key = makeBase64Hash(base64Str);
+  return identifyCache[key] || null;
+}
+
+/**
+ * 31. Simpan ke cache (maks 20 entri, buang yang tertua)
+ */
+function setCachedResult(base64Str, result) {
+  const key = makeBase64Hash(base64Str);
+  identifyCache[key] = { result, ts: Date.now() };
+
+  // Batasi maks 20 entri
+  const keys = Object.keys(identifyCache);
+  if (keys.length > API_CONFIG.CACHE_MAX_ENTRIES) {
+    // Urutkan dari terlama, buang yang terlama
+    keys.sort((a, b) => identifyCache[a].ts - identifyCache[b].ts);
+    delete identifyCache[keys[0]];
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.IDENTIFY_CACHE, JSON.stringify(identifyCache));
+  } catch {
+    // Abaikan QuotaExceededError
+  }
+}
+
+/* =====================================================================
+   WORDS.JSON — Muat data kata lokal untuk pengayaan arti
+   ===================================================================== */
+
+/**
+ * 32. Muat words.json di awal aplikasi
+ */
+async function loadWordsData() {
+  try {
+    const res = await fetch('data/words.json');
+    if (res.ok) {
+      wordsData = await res.json();
+    }
+  } catch {
+    wordsData = [];
+  }
+}
+
+/**
+ * 33. Cari kata di words.json (case-insensitive, handle jamak sederhana)
+ * @returns {object|null} data kata atau null
+ */
+function findWordLocal(word) {
+  if (!word) return null;
+  const lower = word.toLowerCase().trim();
+  // Coba tepat
+  let found = wordsData.find((w) => w.english && w.english.toLowerCase() === lower);
+  if (found) return found;
+  // Coba strip 's' di akhir (jamak dasar)
+  if (lower.endsWith('s')) {
+    const singular = lower.slice(0, -1);
+    found = wordsData.find((w) => w.english && w.english.toLowerCase() === singular);
+    if (found) return found;
+  }
+  return null;
+}
+
+/* =====================================================================
+   SPEECH SYNTHESIS — Suara pengucapan
+   ===================================================================== */
+
+/**
+ * 34. Ucapkan kata dalam bahasa Inggris
+ * @param {string} word
+ * @param {number} rate - 1.0 normal, 0.5 pelan
+ */
+function speakWord(word, rate = 1.0) {
+  if (!word || !window.speechSynthesis) {
+    showSheetError('Browser ini tidak mendukung fitur suara pengucapan.');
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(word);
+  utterance.lang = 'en-US';
+  utterance.rate = rate;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+  window.speechSynthesis.speak(utterance);
+}
+
+/* =====================================================================
+   TAMPILKAN HASIL DI SHEET
+   ===================================================================== */
+
+/**
+ * 35. Isi konten sheet dengan data hasil identify
+ * @param {object} data - { word, indonesian, alternatives, example_en, example_id, fromAI }
+ */
+function populateSheet(data) {
+  currentSheetData = data;
+
+  // Kata utama
+  wordEn.textContent = data.word || '-';
+
+  // Arti — utamakan words.json, fallback ke data dari Gemini
+  const localWord = findWordLocal(data.word);
+  if (localWord && localWord.indonesian) {
+    wordId.textContent = localWord.indonesian;
+    wordSourceBadge.hidden = true;
+  } else if (data.indonesian) {
+    wordId.textContent = data.indonesian;
+    wordSourceBadge.hidden = false;
+  } else {
+    wordId.textContent = 'Arti belum tersedia';
+    wordSourceBadge.hidden = true;
+  }
+
+  // Chip alternatif
+  altChips.forEach((chip, i) => {
+    const alt = data.alternatives && data.alternatives[i];
+    if (alt) {
+      chip.textContent = alt;
+      chip.removeAttribute('data-empty');
+      chip.disabled = false;
+      chip.classList.remove('active');
+    } else {
+      chip.textContent = '-';
+      chip.setAttribute('data-empty', 'true');
+      chip.disabled = true;
+    }
+  });
+
+  // Contoh kalimat
+  exampleEn.textContent = data.example_en || '-';
+  exampleId.textContent = data.example_id || '-';
+
+  // Bersihkan input manual
+  manualWordInput.value = '';
+
+  // Sembunyikan error jika ada
+  hideSheetError();
+}
+
+/**
+ * 36. Ketika chip alternatif ditekan — tampilkan kata alternatif itu di sheet
+ */
+function handleAltChipClick(chip) {
+  const altWord = chip.textContent;
+  if (!altWord || altWord === '-') return;
+
+  // Tandai chip yang dipilih
+  altChips.forEach((c) => c.classList.remove('active'));
+  chip.classList.add('active');
+
+  // Buat data sementara untuk kata alternatif
+  const localWord = findWordLocal(altWord);
+  const altData = {
+    word: altWord,
+    indonesian: localWord ? localWord.indonesian : currentSheetData.indonesian,
+    alternatives: currentSheetData ? currentSheetData.alternatives : [],
+    example_en: currentSheetData ? currentSheetData.example_en : '-',
+    example_id: currentSheetData ? currentSheetData.example_id : '-',
+    fromAI: !localWord
+  };
+
+  // Update tampilan kata tanpa request API baru
+  wordEn.textContent = altData.word;
+  if (localWord && localWord.indonesian) {
+    wordId.textContent = localWord.indonesian;
+    wordSourceBadge.hidden = true;
+  } else {
+    wordId.textContent = currentSheetData ? currentSheetData.indonesian : '-';
+    wordSourceBadge.hidden = false;
+  }
+  currentSheetData = { ...currentSheetData, word: altData.word };
+}
+
+/* =====================================================================
+   PESAN ERROR DI SHEET
+   ===================================================================== */
+
+function showSheetError(message) {
+  sheetErrorText.textContent = message;
+  sheetError.hidden = false;
+}
+
+function hideSheetError() {
+  sheetError.hidden = true;
+}
+
+/* =====================================================================
+   STATUS SPINNER
+   ===================================================================== */
+
+function showStatus(message) {
+  statusMessage.textContent = message;
+  statusOverlay.hidden = false;
+}
+
+function hideStatus() {
+  statusOverlay.hidden = true;
+}
+
+/* =====================================================================
+   REQUEST API IDENTIFY — Kirim gambar ke backend
+   ===================================================================== */
+
+/**
+ * 37. Kirim potongan gambar ke /api/identify
+ * @param {object} cropData - { base64, ... }
+ */
+async function runIdentifyRequest(cropData) {
+  if (!cropData || !cropData.base64) return;
+
+  // Cooldown: hindari request terlalu cepat
+  const now = Date.now();
+  if (now - lastRequestTime < API_CONFIG.COOLDOWN_MS) {
+    const sisaDetik = Math.ceil((API_CONFIG.COOLDOWN_MS - (now - lastRequestTime)) / 1000);
+    showSheetError(`Tunggu ${sisaDetik} detik sebelum mencari lagi.`);
+    if (bottomSheet.hidden) showBottomSheet(SHEET_SNAPS.SMALL);
+    return;
+  }
+
+  // Cek cache dulu
+  const cached = getCachedResult(cropData.base64);
+  if (cached) {
+    populateSheet(cached.result);
+    showBottomSheet(SHEET_SNAPS.SMALL);
+    return;
+  }
+
+  // Cegah double request
+  if (isApiRequestRunning) return;
+  isApiRequestRunning = true;
+  lastRequestTime = now;
+
+  // Nonaktifkan tombol agar tidak bisa ditekan ganda
+  btnAnalyzeCrop.disabled = true;
+
+  showStatus('Mengunggah gambar...');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT_MS);
+
+  try {
+    showStatus('Mengenali benda...');
+
+    const response = await fetch(API_CONFIG.ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: cropData.base64 }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    let responseData;
+    try {
+      responseData = await response.json();
+    } catch {
+      throw new Error('Server mengembalikan respons yang tidak dapat dibaca.');
+    }
+
+    if (!response.ok) {
+      throw new Error(responseData.error || `Terjadi kesalahan server (${response.status}).`);
+    }
+
+    // Simpan ke cache
+    setCachedResult(cropData.base64, responseData);
+
+    hideStatus();
+    populateSheet(responseData);
+    showBottomSheet(SHEET_SNAPS.SMALL);
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    hideStatus();
+
+    let pesan;
+    if (err.name === 'AbortError') {
+      pesan = 'Waktu pengenalan habis (timeout 25 detik). Coba lagi.';
+    } else {
+      pesan = err.message || 'Gagal mengenali objek. Periksa koneksi internet.';
+    }
+
+    // Tampilkan error di sheet agar user tahu
+    if (bottomSheet.hidden) {
+      // Jika sheet belum terbuka, isi dengan data kosong dulu lalu tampilkan error
+      populateSheet({ word: '', indonesian: '', alternatives: ['', '', ''], example_en: '', example_id: '' });
+      showBottomSheet(SHEET_SNAPS.SMALL);
+    }
+    showSheetError(pesan);
+
+  } finally {
+    isApiRequestRunning = false;
+    btnAnalyzeCrop.disabled = false;
+  }
+}
+
+/* =====================================================================
+   SIMPAN KATA KE DAFTAR BELAJARKU
+   ===================================================================== */
+
+/**
+ * 38. Muat daftar kata tersimpan dari localStorage
+ */
+function loadSavedWords() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SAVED_WORDS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 39. Simpan kata ke localStorage
+ */
+function saveWordToList(wordData) {
+  const saved = loadSavedWords();
+  // Hindari duplikat (berdasarkan kata Inggris)
+  const exists = saved.some(
+    (w) => w.english && w.english.toLowerCase() === (wordData.english || '').toLowerCase()
+  );
+  if (exists) return false;
+
+  saved.unshift({
+    english: wordData.english,
+    indonesian: wordData.indonesian,
+    savedAt: Date.now()
+  });
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.SAVED_WORDS, JSON.stringify(saved));
+  } catch {
+    // QuotaExceededError
+  }
+  return true;
+}
+
+/**
+ * 40. Render ulang daftar kata tersimpan di menu overlay
+ */
+function renderSavedWordsList() {
+  const saved = loadSavedWords();
+  savedWordCount.textContent = `${saved.length} kata`;
+
+  if (saved.length === 0) {
+    savedEmptyPrompt.hidden = false;
+    savedWordsList.innerHTML = '';
+    return;
+  }
+
+  savedEmptyPrompt.hidden = true;
+  savedWordsList.innerHTML = '';
+
+  saved.forEach((w) => {
+    const li = document.createElement('li');
+    li.className = 'saved-word-item';
+
+    const enSpan = document.createElement('span');
+    enSpan.className = 'saved-word-en';
+    enSpan.textContent = w.english || '-';
+
+    const idSpan = document.createElement('span');
+    idSpan.className = 'saved-word-id';
+    idSpan.textContent = w.indonesian || '-';
+
+    li.appendChild(enSpan);
+    li.appendChild(idSpan);
+    savedWordsList.appendChild(li);
+  });
+}
+
+/**
+ * 41. Listener tombol Simpan ke Daftar
+ */
+function handleSaveWord() {
+  if (!currentSheetData || !currentSheetData.word) {
+    showSheetError('Tidak ada kata yang bisa disimpan saat ini.');
+    return;
+  }
+
+  const localEntry = findWordLocal(currentSheetData.word);
+  const indonesian = localEntry
+    ? localEntry.indonesian
+    : currentSheetData.indonesian || '';
+
+  const success = saveWordToList({
+    english: currentSheetData.word,
+    indonesian
+  });
+
+  if (success) {
+    btnSaveWord.textContent = '✓ Tersimpan!';
+    btnSaveWord.disabled = true;
+    renderSavedWordsList();
+    setTimeout(() => {
+      btnSaveWord.innerHTML = `<svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/></svg> Simpan ke Daftar Belajarku`;
+      btnSaveWord.disabled = false;
+    }, 2000);
+  } else {
+    showSheetError(`"${currentSheetData.word}" sudah ada di daftar belajarmu.`);
+  }
+}
+
+/**
+ * 42. Listener tombol Ketik Manual
+ */
+function handleManualSubmit() {
+  const rawInput = manualWordInput.value.trim();
+  if (!rawInput) return;
+
+  // Sanitasi input manual: hanya huruf, spasi, dan tanda hubung
+  const cleaned = rawInput.toLowerCase().replace(/[^a-z\s-]/g, '').slice(0, 30);
+  if (!cleaned) {
+    showSheetError('Kata yang dimasukkan tidak valid. Hanya boleh huruf a-z, spasi, atau tanda hubung (-).');
+    return;
+  }
+
+  const localWord = findWordLocal(cleaned);
+  const manualData = {
+    word: cleaned,
+    indonesian: localWord ? localWord.indonesian : '(arti belum tersedia)',
+    alternatives: currentSheetData ? currentSheetData.alternatives : ['', '', ''],
+    example_en: localWord ? '' : (currentSheetData ? currentSheetData.example_en : ''),
+    example_id: localWord ? '' : (currentSheetData ? currentSheetData.example_id : ''),
+    fromAI: false
+  };
+
+  populateSheet(manualData);
+  manualWordInput.blur();
+}
+
+/**
  * 18. Listener untuk Interaksi Bounding Box
  */
 function setupBoundingBoxEvents() {
@@ -586,8 +1256,9 @@ function setupCameraControlEvents() {
     if (cropData) {
       currentCroppedData = cropData;
       cropDimensionsText.textContent = `${cropData.width} × ${cropData.height} px`;
-      cropSizeText.textContent = `${cropData.sizeKb} KB (Siap)`;
+      cropSizeText.textContent = `${cropData.sizeKb} KB`;
       cropInfoBadge.hidden = false;
+      await runIdentifyRequest(cropData);
     }
   });
 
@@ -604,13 +1275,15 @@ function setupCameraControlEvents() {
 }
 
 /**
- * 20. Listener untuk Mode Switcher dan Menu Overlay
+ * 20. Listener untuk Mode Switcher, Menu Overlay, Sheet, dan Tombol Hasil
  */
 function setupMenuAndModeEvents() {
+  // Mode switcher chips
   modeChips.forEach((chip) => {
     chip.addEventListener('click', () => setAppMode(chip.dataset.mode));
   });
 
+  // Menu overlay
   btnOpenMenu.addEventListener('click', openMenuOverlay);
   btnCloseMenu.addEventListener('click', closeMenuOverlay);
 
@@ -618,10 +1291,60 @@ function setupMenuAndModeEvents() {
     tabBtn.addEventListener('click', () => switchMenuView(tabBtn.dataset.menuView));
   });
 
+  // Resize & orientasi
   window.addEventListener('resize', updateScrimLayout);
   window.addEventListener('orientationchange', () => {
     setTimeout(updateScrimLayout, 150);
   });
+
+  // Sheet drag handle
+  setupSheetDragEvents();
+
+  // Tombol audio di sheet
+  btnSpeakNormal.addEventListener('click', () => {
+    const word = wordEn.textContent;
+    if (word && word !== '-') speakWord(word, 1.0);
+  });
+  btnSpeakSlow.addEventListener('click', () => {
+    const word = wordEn.textContent;
+    if (word && word !== '-') speakWord(word, 0.5);
+  });
+
+  // Chip alternatif
+  altChips.forEach((chip) => {
+    chip.addEventListener('click', () => handleAltChipClick(chip));
+  });
+
+  // Simpan kata
+  btnSaveWord.addEventListener('click', handleSaveWord);
+
+  // Input manual
+  btnManualSubmit.addEventListener('click', handleManualSubmit);
+  manualWordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleManualSubmit();
+  });
+
+  // Tombol Cari Ulang — crop ulang area bounding box saat ini lalu kirim
+  btnReanalyze.addEventListener('click', async () => {
+    hideSheetError();
+    const cropData = await cropBoundingBoxImage();
+    if (cropData) {
+      currentCroppedData = cropData;
+      await runIdentifyRequest(cropData);
+    }
+  });
+
+  // Tombol Ambil Ulang dari dalam sheet
+  btnRetakeFromSheet.addEventListener('click', () => {
+    hideBottomSheet();
+    retakeCamera();
+  });
+
+  // Tutup pesan error di sheet
+  btnDismissSheetError.addEventListener('click', hideSheetError);
+
+  // Tutup menu juga saat klik tombol Ambil Ulang di baris frozen
+  btnRetake.addEventListener('click', () => hideBottomSheet());
 }
 
 /**
@@ -639,6 +1362,9 @@ function setupEventListeners() {
 function initializeApp() {
   setupEventListeners();
   loadStoredAppMode();
+  loadIdentifyCache();
+  loadWordsData();
+  renderSavedWordsList();
   updateScrimLayout();
   startCameraStream(currentFacingMode);
 }

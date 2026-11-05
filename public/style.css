@@ -685,3 +685,405 @@ html, body {
   margin-top: 6px;
   font-size: 15px;
 }
+
+/* ==========================================================================
+   LensLingo - Bottom Sheet & Status Overlay (Langkah 4)
+   ========================================================================== */
+
+/* STATUS OVERLAY — Spinner tipis saat request API berjalan */
+.status-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 16, 12, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.status-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  background: var(--overlay-card);
+  border: 1px solid rgba(183, 201, 174, 0.15);
+  border-radius: var(--radius-md);
+  padding: 24px 32px;
+  box-shadow: var(--shadow-soft);
+}
+
+.status-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(183, 201, 174, 0.2);
+  border-top-color: var(--sage-300);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Jangan animasi jika user minta reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner {
+    animation: none;
+    border-top-color: var(--sage-300);
+    opacity: 0.6;
+  }
+}
+
+.status-text {
+  color: var(--sage-100);
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+/* BOTTOM SHEET — Draggable dengan 3 snap position */
+.bottom-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  background: var(--overlay-card);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.45);
+  /* Tinggi maksimal sheet = 90% layar */
+  max-height: 90dvh;
+  /* transform diatur via JS (translateY) */
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  /* overflow pada container luar: hidden — scroll hanya di dalam .sheet-scroll-area */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+  will-change: transform;
+}
+
+/* Nonaktifkan animasi jika user minta reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .bottom-sheet {
+    transition: none;
+  }
+}
+
+/* Pegangan Tarik Sheet */
+.sheet-handle {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0 8px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.sheet-handle:active {
+  cursor: grabbing;
+}
+
+.handle-pill {
+  width: 40px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(183, 201, 174, 0.35);
+}
+
+/* Header Sheet: Kata Utama + Tombol Audio */
+.sheet-header {
+  flex-shrink: 0;
+  padding: 4px 20px 16px;
+  background: var(--gradient-accent);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sheet-word-block {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.word-en {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--sage-900);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  flex: 1;
+}
+
+.word-audio-row {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+
+.btn-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: rgba(30, 43, 34, 0.25);
+  border: 1px solid rgba(30, 43, 34, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--sage-900);
+  font-size: 0.65rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 52px;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-audio .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-audio:active {
+  background: rgba(30, 43, 34, 0.4);
+  transform: scale(0.95);
+}
+
+.word-id-block {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.word-id {
+  font-size: 1rem;
+  color: rgba(30, 43, 34, 0.75);
+  font-weight: 500;
+}
+
+.word-source-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--sage-900);
+  background: rgba(30, 43, 34, 0.15);
+  border: 1px solid rgba(30, 43, 34, 0.2);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+}
+
+/* Area Scroll Sheet (hanya scroll saat sheet penuh) */
+.sheet-scroll-area {
+  flex: 1;
+  overflow: hidden; /* JS ganti ke auto saat sheet penuh */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+/* Sections di dalam Sheet */
+.sheet-section {
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(183, 201, 174, 0.1);
+}
+
+.sheet-section:last-child {
+  border-bottom: none;
+}
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sage-300);
+  margin-bottom: 10px;
+}
+
+/* Chip Alternatif */
+.alt-chips-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alt-chip {
+  background: rgba(183, 201, 174, 0.1);
+  border: 1px solid rgba(183, 201, 174, 0.2);
+  border-radius: var(--radius-pill);
+  color: var(--sage-100);
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.alt-chip:hover,
+.alt-chip:active {
+  background: rgba(183, 201, 174, 0.22);
+  border-color: var(--sage-300);
+}
+
+.alt-chip.active {
+  background: var(--gradient-accent);
+  border-color: transparent;
+  color: var(--sage-900);
+  font-weight: 700;
+}
+
+.alt-chip:disabled,
+.alt-chip[data-empty="true"] {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Kartu Contoh Kalimat */
+.example-card {
+  background: rgba(183, 201, 174, 0.07);
+  border: 1px solid rgba(183, 201, 174, 0.12);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.example-en {
+  font-size: 0.9rem;
+  color: var(--sage-100);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.example-id {
+  font-size: 0.82rem;
+  color: var(--sage-300);
+  line-height: 1.4;
+}
+
+/* Input Manual Fallback */
+.manual-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.manual-input {
+  flex: 1;
+  background: rgba(183, 201, 174, 0.08);
+  border: 1px solid rgba(183, 201, 174, 0.2);
+  border-radius: var(--radius-sm);
+  color: var(--sage-50);
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  outline: none;
+  font-family: var(--font-family);
+}
+
+.manual-input:focus {
+  border-color: var(--sage-300);
+  background: rgba(183, 201, 174, 0.12);
+}
+
+.manual-input::placeholder {
+  color: rgba(183, 201, 174, 0.4);
+}
+
+/* Tombol Aksi Sheet */
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sheet-secondary-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sheet-secondary-actions .btn {
+  flex: 1;
+  font-size: 0.82rem;
+  padding: 10px 8px;
+}
+
+/* Ukuran tombol kecil */
+.btn-sm {
+  font-size: 0.82rem;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+/* Error Box di dalam Sheet */
+.sheet-error-box {
+  margin: 12px 20px;
+  background: rgba(220, 100, 80, 0.12);
+  border: 1px solid rgba(220, 100, 80, 0.3);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sheet-error-text {
+  flex: 1;
+  font-size: 0.85rem;
+  color: #f4b8b0;
+  line-height: 1.4;
+}
+
+.btn-dismiss-error {
+  background: none;
+  border: none;
+  color: rgba(244, 184, 176, 0.6);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   LensLingo - Daftar Kata Tersimpan (Langkah 4)
+   ========================================================================== */
+
+/* List item di Daftar Belajarku */
+.saved-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.saved-word-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(183, 201, 174, 0.07);
+  border: 1px solid rgba(183, 201, 174, 0.12);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.saved-word-en {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--sage-100);
+}
+
+.saved-word-id {
+  font-size: 0.82rem;
+  color: var(--sage-300);
+}
