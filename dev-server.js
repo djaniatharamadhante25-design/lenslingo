@@ -103,9 +103,6 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: 'Format JSON body tidak valid' }));
       }
     });
-        res.end(JSON.stringify({ error: 'Format JSON body tidak valid' }));
-      }
-    });
     return;
   }
 
