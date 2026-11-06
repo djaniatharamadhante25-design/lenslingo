@@ -68,6 +68,7 @@ const server = http.createServer((req, res) => {
 
     req.on('end', async () => {
       try {
+        console.log(`[DEV-SERVER] 📸 Menerima foto untuk diidentifikasi (${Math.round(body.length / 1024)} KB)...`);
         const parsedBody = body ? JSON.parse(body) : {};
         const mockReq = { method: req.method, body: parsedBody, headers: req.headers };
 
@@ -82,6 +83,11 @@ const server = http.createServer((req, res) => {
             return this;
           },
           json(data) {
+            if (this._status === 200) {
+              console.log(`[DEV-SERVER] ✅ Berhasil mengenali: "${data.word}" (${data.indonesian || '-'})`);
+            } else {
+              console.log(`[DEV-SERVER] ❌ Gagal (${this._status}):`, data.error || 'Unknown error');
+            }
             res.writeHead(this._status, {
               'Content-Type': 'application/json',
               ...this._headers
@@ -92,7 +98,11 @@ const server = http.createServer((req, res) => {
 
         await identifyHandler(mockReq, mockRes);
       } catch (err) {
+        console.error('[DEV-SERVER] ❌ Error:', err.message);
         res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Format JSON body tidak valid' }));
+      }
+    });
         res.end(JSON.stringify({ error: 'Format JSON body tidak valid' }));
       }
     });

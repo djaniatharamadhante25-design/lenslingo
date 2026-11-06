@@ -276,8 +276,8 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  // [FIX] Model default diganti ke gemini-2.0-flash (model valid free tier saat ini)
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  // Model default Gemini 3.5 Flash Lite (sangat cepat ~1.2s dan aktif di Google API)
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
   try {
     // Kirim rawBase64 (sudah distrip prefix Data URL) ke Gemini
