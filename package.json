@@ -1,0 +1,12 @@
+{
+  "name": "lenslingo",
+  "version": "1.0.0",
+  "description": "Camera-first English visual learning app with Google Gemini AI",
+  "private": true,
+  "engines": {
+    "node": ">=18.x"
+  },
+  "scripts": {
+    "start": "node dev-server.js"
+  }
+}
