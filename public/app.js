@@ -6,13 +6,14 @@
 // 1. Registrasi Konfigurasi Mode (Extensible Mode Registry)
 const APP_MODES = {
   translation: { id: 'translation', title: 'Terjemahan', enabled: true },
-  asl: { id: 'asl', title: 'ASL', enabled: false, badge: 'Segera' }
+  asl: { id: 'asl', title: 'ASL', enabled: true }
 };
 
 const STORAGE_KEYS = {
   ACTIVE_MODE: 'lenslingo_active_mode',
   SAVED_WORDS: 'lenslingo_saved_words',
-  IDENTIFY_CACHE: 'lenslingo_cache'
+  IDENTIFY_CACHE: 'lenslingo_cache',
+  ASL_CACHE: 'lenslingo_asl_cache'
 };
 
 const CROP_CONFIG = {
@@ -27,6 +28,14 @@ const API_CONFIG = {
   TIMEOUT_MS: 25000,
   COOLDOWN_MS: 3000,
   CACHE_MAX_ENTRIES: 20
+};
+
+// Konfigurasi API YouTube ASL
+const ASL_CONFIG = {
+  ENDPOINT: '/api/asl',
+  TIMEOUT_MS: 15000,
+  CACHE_MAX_ENTRIES: 30,
+  CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000 // 7 hari
 };
 
 // Snap positions sheet (dalam persen dari bawah layar)
@@ -53,6 +62,16 @@ let currentSheetData = null; // Data yang sedang ditampilkan di sheet
 
 // Cache Hasil Identify (key: hash base64, value: { result, ts })
 let identifyCache = {};
+
+// Cache Hasil ASL YouTube (key: kata lowercase, value: { videos, ts })
+let aslCache = {};
+
+// State Khusus Mode ASL
+let currentAslWord = null;
+let currentAslVideos = [];
+let currentAslIndex = 0;
+let aslAbortController = null;
+let isAslFetching = false;
 
 // Data words.json yang dimuat di awal
 let wordsData = [];
@@ -113,6 +132,22 @@ const sheetScrollArea = document.getElementById('sheetScrollArea');
 const wordEn = document.getElementById('wordEn');
 const wordId = document.getElementById('wordId');
 const wordSourceBadge = document.getElementById('wordSourceBadge');
+const sheetModeTabs = document.querySelectorAll('.sheet-mode-tab');
+const translationContentBlock = document.getElementById('translationContentBlock');
+const aslContentBlock = document.getElementById('aslContentBlock');
+
+const aslIndexBadge = document.getElementById('aslIndexBadge');
+const aslLoadingCard = document.getElementById('aslLoadingCard');
+const aslPlayerWrapper = document.getElementById('aslPlayerWrapper');
+const aslVideoSlot = document.getElementById('aslVideoSlot');
+const aslCreditBlock = document.getElementById('aslCreditBlock');
+const aslVideoTitle = document.getElementById('aslVideoTitle');
+const aslVideoChannel = document.getElementById('aslVideoChannel');
+const btnNextAslVideo = document.getElementById('btnNextAslVideo');
+const aslFallbackCard = document.getElementById('aslFallbackCard');
+const aslFallbackMsg = document.getElementById('aslFallbackMsg');
+const btnOpenYouTubeSearch = document.getElementById('btnOpenYouTubeSearch');
+
 const btnSpeakNormal = document.getElementById('btnSpeakNormal');
 const btnSpeakSlow = document.getElementById('btnSpeakSlow');
 const altChips = document.querySelectorAll('.alt-chip');
@@ -585,11 +620,29 @@ function setAppMode(targetModeId) {
   activeModeId = targetModeId;
   localStorage.setItem(STORAGE_KEYS.ACTIVE_MODE, targetModeId);
 
+  // Update mode chips di bottom dock
   modeChips.forEach((chip) => {
     const isCurrent = chip.dataset.mode === targetModeId;
     chip.classList.toggle('active', isCurrent);
     chip.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
   });
+
+  // Update tab mode di dalam bottom sheet
+  sheetModeTabs.forEach((tab) => {
+    const isCurrent = tab.dataset.sheetMode === targetModeId;
+    tab.classList.toggle('active', isCurrent);
+    tab.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+  });
+
+  // Ganti tampilan blok konten di dalam bottom sheet
+  const isAsl = targetModeId === 'asl';
+  if (aslContentBlock) aslContentBlock.hidden = !isAsl;
+  if (translationContentBlock) translationContentBlock.hidden = isAsl;
+
+  // Jika beralih ke mode ASL dan hasil kata sudah ada di layar, langsung tampilkan video ASL (tanpa panggil Gemini)
+  if (isAsl && currentSheetData && currentSheetData.word) {
+    loadAslForCurrentWord(currentSheetData.word);
+  }
 }
 
 function loadStoredAppMode() {
@@ -829,6 +882,57 @@ function setCachedResult(base64Str, result) {
   }
 }
 
+/**
+ * 31b. Muat cache video ASL dari localStorage
+ */
+function loadAslCache() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ASL_CACHE);
+    aslCache = raw ? JSON.parse(raw) : {};
+  } catch {
+    aslCache = {};
+  }
+}
+
+/**
+ * 31c. Ambil video ASL dari cache jika masih berlaku
+ */
+function getCachedAsl(word) {
+  if (!word) return null;
+  const key = word.toLowerCase().trim();
+  const entry = aslCache[key];
+  if (!entry) return null;
+
+  // Cek apakah data sudah kedaluwarsa (TTL 7 hari)
+  if (Date.now() - entry.ts > ASL_CONFIG.CACHE_TTL_MS) {
+    delete aslCache[key];
+    return null;
+  }
+  return entry.videos || null;
+}
+
+/**
+ * 31d. Simpan video ASL ke cache (hanya video sukses, maks 30 entri)
+ */
+function setCachedAsl(word, videos) {
+  if (!word || !Array.isArray(videos) || videos.length === 0) return;
+  const key = word.toLowerCase().trim();
+  aslCache[key] = { videos, ts: Date.now() };
+
+  // Batasi maksimal 30 entri
+  const keys = Object.keys(aslCache);
+  if (keys.length > ASL_CONFIG.CACHE_MAX_ENTRIES) {
+    keys.sort((a, b) => aslCache[a].ts - aslCache[b].ts);
+    delete aslCache[keys[0]];
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.ASL_CACHE, JSON.stringify(aslCache));
+  } catch {
+    // Abaikan QuotaExceededError
+  }
+}
+
 /* =====================================================================
    WORDS.JSON — Muat data kata lokal untuk pengayaan arti
    ===================================================================== */
@@ -941,6 +1045,18 @@ function populateSheet(data) {
 
   // Sembunyikan error jika ada
   hideSheetError();
+
+  // Sinkronkan tampilan mode aktif (Terjemahan vs ASL)
+  const isAsl = activeModeId === 'asl';
+  if (aslContentBlock) aslContentBlock.hidden = !isAsl;
+  if (translationContentBlock) translationContentBlock.hidden = isAsl;
+
+  // Jika sedang dalam mode ASL dan ada kata, langsung muat video ASL
+  if (isAsl && data.word) {
+    loadAslForCurrentWord(data.word);
+  } else {
+    currentAslWord = null;
+  }
 }
 
 /**
@@ -975,6 +1091,183 @@ function handleAltChipClick(chip) {
     wordSourceBadge.hidden = false;
   }
   currentSheetData = { ...currentSheetData, word: altData.word };
+
+  // Jika sedang dalam mode ASL, langsung perbarui video untuk kata alternatif ini
+  if (activeModeId === 'asl' && altData.word) {
+    loadAslForCurrentWord(altData.word);
+  }
+}
+
+/* =====================================================================
+   MANAJEMEN VIDEO ISYARAT ASL (YouTube Data API v3)
+   ===================================================================== */
+
+/**
+ * 36b. Memuat daftar video ASL untuk kata yang aktif
+ * Membatalkan request lama jika kata berganti cepat, mencegah klik berulang,
+ * dan menggunakan cache browser jika sudah pernah dicari.
+ */
+async function loadAslForCurrentWord(word) {
+  if (!word || typeof word !== 'string') return;
+  const cleanWord = word.trim().toLowerCase();
+  if (!cleanWord) return;
+
+  // Jika kata sama dan video sudah tampil, tidak perlu memuat ulang
+  if (currentAslWord === cleanWord && currentAslVideos.length > 0 && !aslPlayerWrapper.hidden) {
+    return;
+  }
+
+  // Batalkan request yang sedang berjalan jika kata berganti cepat
+  if (aslAbortController) {
+    aslAbortController.abort();
+    aslAbortController = null;
+  }
+
+  currentAslWord = cleanWord;
+  currentAslVideos = [];
+  currentAslIndex = 0;
+
+  // Bersihkan slot video sebelumnya
+  if (aslVideoSlot) aslVideoSlot.innerHTML = '';
+
+  // Atur state tampilan ke kondisi memuat (loading)
+  if (aslLoadingCard) aslLoadingCard.hidden = false;
+  if (aslPlayerWrapper) aslPlayerWrapper.hidden = true;
+  if (aslCreditBlock) aslCreditBlock.hidden = true;
+  if (btnNextAslVideo) btnNextAslVideo.hidden = true;
+  if (aslIndexBadge) aslIndexBadge.hidden = true;
+  if (aslFallbackCard) aslFallbackCard.hidden = true;
+
+  // 1. Periksa cache lokal terlebih dahulu
+  const cachedVideos = getCachedAsl(cleanWord);
+  if (cachedVideos && cachedVideos.length > 0) {
+    currentAslVideos = cachedVideos;
+    if (aslLoadingCard) aslLoadingCard.hidden = true;
+    renderCurrentAslVideo();
+    return;
+  }
+
+  // 2. Cegah klik berulang dan panggil API /api/asl
+  if (isAslFetching) return;
+  isAslFetching = true;
+
+  const controller = new AbortController();
+  aslAbortController = controller;
+
+  try {
+    const url = `${ASL_CONFIG.ENDPOINT}?word=${encodeURIComponent(cleanWord)}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal
+    });
+
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error('Gagal membaca data dari server video.');
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Gagal mencari video isyarat.');
+    }
+
+    const videos = Array.isArray(data.videos) ? data.videos : [];
+    if (videos.length === 0) {
+      showAslFallback(`Tidak ditemukan video isyarat untuk kata "${cleanWord}".`, cleanWord);
+      return;
+    }
+
+    // Simpan ke cache (hanya hasil sukses)
+    setCachedAsl(cleanWord, videos);
+
+    currentAslVideos = videos;
+    currentAslIndex = 0;
+    if (aslLoadingCard) aslLoadingCard.hidden = true;
+    renderCurrentAslVideo();
+
+  } catch (err) {
+    // Abaikan jika request dibatalkan karena pengguna mengganti kata
+    if (err.name === 'AbortError') return;
+
+    if (aslLoadingCard) aslLoadingCard.hidden = true;
+    const errorMsg = err.message || 'Pencarian video isyarat mengalami kendala.';
+    showAslFallback(errorMsg, cleanWord);
+
+  } finally {
+    isAslFetching = false;
+    aslAbortController = null;
+  }
+}
+
+/**
+ * 36c. Menyematkan video iframe dan informasi kredit di layar
+ */
+function renderCurrentAslVideo() {
+  if (!currentAslVideos || currentAslVideos.length === 0) return;
+
+  const video = currentAslVideos[currentAslIndex];
+  if (!video || !video.videoId) return;
+
+  // Bersihkan dan sematkan iframe baru via JavaScript (hanya saat ada video)
+  if (aslVideoSlot) {
+    aslVideoSlot.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(video.videoId)}?autoplay=1&mute=1&playsinline=1&rel=0`;
+    iframe.title = video.title || 'Video Isyarat ASL';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    iframe.loading = 'lazy';
+    aslVideoSlot.appendChild(iframe);
+  }
+
+  // Tampilkan judul dan nama channel dengan textContent (keamanan anti XSS)
+  if (aslVideoTitle) aslVideoTitle.textContent = video.title || '-';
+  if (aslVideoChannel) aslVideoChannel.textContent = video.channelTitle ? `Oleh: ${video.channelTitle}` : '';
+
+  // Perbarui indikator video (misal: Video 1/5)
+  if (aslIndexBadge) {
+    aslIndexBadge.textContent = `Video ${currentAslIndex + 1}/${currentAslVideos.length}`;
+    aslIndexBadge.hidden = currentAslVideos.length <= 1;
+  }
+
+  // Tampilkan tombol "Coba video lain" hanya jika ada lebih dari 1 video
+  if (btnNextAslVideo) {
+    btnNextAslVideo.hidden = currentAslVideos.length <= 1;
+  }
+
+  if (aslPlayerWrapper) aslPlayerWrapper.hidden = false;
+  if (aslCreditBlock) aslCreditBlock.hidden = false;
+  if (aslFallbackCard) aslFallbackCard.hidden = true;
+}
+
+/**
+ * 36d. Berpindah ke video berikutnya (berputar kembali jika habis)
+ */
+function handleNextAslVideo() {
+  if (!currentAslVideos || currentAslVideos.length <= 1) return;
+  currentAslIndex = (currentAslIndex + 1) % currentAslVideos.length;
+  renderCurrentAslVideo();
+}
+
+/**
+ * 36e. Menampilkan kartu fallback dengan tombol langsung ke YouTube
+ */
+function showAslFallback(message, word) {
+  if (aslPlayerWrapper) aslPlayerWrapper.hidden = true;
+  if (aslCreditBlock) aslCreditBlock.hidden = true;
+  if (btnNextAslVideo) btnNextAslVideo.hidden = true;
+  if (aslIndexBadge) aslIndexBadge.hidden = true;
+
+  if (aslFallbackMsg) aslFallbackMsg.textContent = message;
+
+  if (btnOpenYouTubeSearch) {
+    const encodedQuery = encodeURIComponent(`how to sign ${word || ''} in ASL`);
+    btnOpenYouTubeSearch.href = `https://www.youtube.com/results?search_query=${encodedQuery}`;
+  }
+
+  if (aslFallbackCard) aslFallbackCard.hidden = false;
 }
 
 /* =====================================================================
@@ -1283,6 +1576,16 @@ function setupMenuAndModeEvents() {
     chip.addEventListener('click', () => setAppMode(chip.dataset.mode));
   });
 
+  // Tab mode di dalam bottom sheet
+  sheetModeTabs.forEach((tab) => {
+    tab.addEventListener('click', () => setAppMode(tab.dataset.sheetMode));
+  });
+
+  // Tombol ganti video ASL
+  if (btnNextAslVideo) {
+    btnNextAslVideo.addEventListener('click', handleNextAslVideo);
+  }
+
   // Menu overlay
   btnOpenMenu.addEventListener('click', openMenuOverlay);
   btnCloseMenu.addEventListener('click', closeMenuOverlay);
@@ -1363,6 +1666,7 @@ function initializeApp() {
   setupEventListeners();
   loadStoredAppMode();
   loadIdentifyCache();
+  loadAslCache();
   loadWordsData();
   renderSavedWordsList();
   updateScrimLayout();

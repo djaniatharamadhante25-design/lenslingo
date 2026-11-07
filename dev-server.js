@@ -8,6 +8,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const identifyHandler = require('./api/identify.js');
+const aslHandler = require('./api/asl.js');
 
 // Baca file .env lokal jika ada (tanpa library dotenv)
 const envPath = path.join(__dirname, '.env');
@@ -106,7 +107,45 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 2. Tangani file statis dari public/
+  // 2. Tangani endpoint API /api/asl
+  if (req.url === '/api/asl' || req.url.startsWith('/api/asl?')) {
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const query = Object.fromEntries(parsedUrl.searchParams.entries());
+    const mockReq = { method: req.method, url: req.url, query, headers: req.headers };
+
+    const mockRes = {
+      _status: 200,
+      _headers: {},
+      setHeader(name, val) {
+        this._headers[name] = val;
+      },
+      status(code) {
+        this._status = code;
+        return this;
+      },
+      json(data) {
+        if (this._status === 200) {
+          console.log(`[DEV-SERVER] 🤟 ASL: Ditemukan ${data.videos?.length || 0} video untuk "${data.word}"`);
+        } else {
+          console.log(`[DEV-SERVER] ❌ ASL Gagal (${this._status}):`, data.error || 'Unknown error');
+        }
+        res.writeHead(this._status, {
+          'Content-Type': 'application/json',
+          ...this._headers
+        });
+        res.end(JSON.stringify(data));
+      }
+    };
+
+    aslHandler(mockReq, mockRes).catch((err) => {
+      console.error('[DEV-SERVER] ❌ ASL Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Terjadi kesalahan server lokal' }));
+    });
+    return;
+  }
+
+  // 3. Tangani file statis dari public/
   let reqPath = req.url.split('?')[0];
   if (reqPath === '/' || reqPath === '') {
     reqPath = '/index.html';

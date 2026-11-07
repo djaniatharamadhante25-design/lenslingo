@@ -132,8 +132,8 @@
         <button type="button" class="mode-chip active" data-mode="translation" aria-pressed="true">
           Terjemahan
         </button>
-        <button type="button" class="mode-chip disabled" data-mode="asl" aria-disabled="true" disabled>
-          ASL <span class="chip-badge">Segera</span>
+        <button type="button" class="mode-chip" data-mode="asl" aria-pressed="false">
+          ASL
         </button>
       </nav>
     </div>
@@ -248,10 +248,79 @@
         <p id="wordId" class="word-id">-</p>
         <span id="wordSourceBadge" class="word-source-badge" hidden>arti dari AI</span>
       </div>
+
+      <!-- Tab Pemilih Mode di dalam Bottom Sheet -->
+      <div class="sheet-mode-tabs" role="tablist" aria-label="Mode tampilan hasil">
+        <button type="button" id="tabModeTranslation" class="sheet-mode-tab active" data-sheet-mode="translation" role="tab" aria-selected="true">
+          Terjemahan
+        </button>
+        <button type="button" id="tabModeAsl" class="sheet-mode-tab" data-sheet-mode="asl" role="tab" aria-selected="false">
+          Isyarat ASL
+        </button>
+      </div>
     </div>
 
     <!-- Konten Sheet (hanya bisa di-scroll saat sheet penuh) -->
     <div id="sheetScrollArea" class="sheet-scroll-area">
+
+      <!-- BLOK MODE ASL (Tampil saat mode ASL aktif) -->
+      <div id="aslContentBlock" class="sheet-mode-block" hidden>
+        <div class="sheet-section">
+          <div class="asl-header-row">
+            <p class="section-label">Video Isyarat ASL</p>
+            <span id="aslIndexBadge" class="badge-pill" hidden>Video 1/5</span>
+          </div>
+
+          <!-- Loading State ASL -->
+          <div id="aslLoadingCard" class="asl-loading-card" hidden role="status">
+            <div class="status-spinner-sm" aria-hidden="true"></div>
+            <p class="asl-loading-text">Mencari video isyarat untuk kata ini...</p>
+          </div>
+
+          <!-- Video Container (Iframe YouTube disematkan via JavaScript) -->
+          <div id="aslPlayerWrapper" class="asl-player-wrapper" hidden>
+            <div id="aslVideoSlot" class="asl-video-slot"></div>
+          </div>
+
+          <!-- Informasi Judul & Nama Channel (Kredit) -->
+          <div id="aslCreditBlock" class="asl-credit-block" hidden>
+            <h3 id="aslVideoTitle" class="asl-video-title">-</h3>
+            <p id="aslVideoChannel" class="asl-video-channel">-</p>
+          </div>
+
+          <!-- Tombol Pindah Video -->
+          <button type="button" id="btnNextAslVideo" class="btn btn-outline-sage btn-block btn-next-video" hidden>
+            <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+              <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6M12 4v12m5-5l-5 5-5-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Video salah? Coba video lain</span>
+          </button>
+
+          <!-- Kartu Fallback Error / Kuota Habis / Hasil Kosong -->
+          <div id="aslFallbackCard" class="asl-fallback-card" hidden role="alert">
+            <p id="aslFallbackMsg" class="asl-fallback-msg">Video isyarat tidak dapat dimuat.</p>
+            <a id="btnOpenYouTubeSearch" href="https://www.youtube.com" target="_blank" rel="noopener noreferrer" class="btn btn-sage-accent btn-block btn-yt-fallback">
+              <svg viewBox="0 0 24 24" class="svg-icon" aria-hidden="true">
+                <path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z" fill="currentColor"/>
+                <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02" fill="#1E2B22"/>
+              </svg>
+              <span>Cari di YouTube</span>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- BLOK MODE TERJEMAHAN (Tampil saat mode Terjemahan aktif) -->
+      <div id="translationContentBlock" class="sheet-mode-block">
+        <!-- Contoh Kalimat -->
+        <div class="sheet-section">
+          <p class="section-label">Contoh kalimat</p>
+          <div class="example-card">
+            <p id="exampleEn" class="example-en">-</p>
+            <p id="exampleId" class="example-id">-</p>
+          </div>
+        </div>
+      </div>
 
       <!-- Chip Kandidat Alternatif (3 pilihan) -->
       <div class="sheet-section">
